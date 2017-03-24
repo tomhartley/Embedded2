@@ -40,13 +40,16 @@ const int8_t stateMap[] = {0x07,0x05,0x03,0x04,0x01,0x00,0x02,0x07};
 //Phase lead to make motor spin
 volatile int8_t lead = 2;  //2 for forwards, -2 for backwards
 
+// speed
 int8_t orState = 0;    //Rotot offset at motor state 0
 volatile float speed = 0;
 volatile float max_spd = 0;
 
+// rotations
 volatile uint16_t rotations = 0;
 volatile uint16_t max_rotations = 0;
 
+// direction
 volatile int8_t direction = -1;
 volatile uint8_t dir_prev;
 
@@ -55,9 +58,10 @@ volatile int avg_time = 0; // 1/6 of a cycle
 volatile int prev_times[] = {0,0,0,0,0,0};
 Timer rot;
 
+// mutex
 Mutex mut;
 
-// 
+// set mode
 volatile int dist = 0; //0 == set velocity; 1 == set distance
 
 
@@ -74,9 +78,6 @@ DigitalOut led1(LED1);
 InterruptIn I1(I1pin);
 InterruptIn I2(I2pin);
 InterruptIn I3(I3pin);
-//InterruptIn I4(I1pin);
-//InterruptIn I5(I2pin);
-//InterruptIn I6(I3pin);
 
 //Motor Drive outputs
 PwmOut L1L(L1Lpin);
@@ -137,8 +138,7 @@ void photoInterrupt_1(){
         prev_times [i-1] = prev_times [i];
     }
     prev_times[5] = avg_time;
-    //dir_hist [1] is most recent, dir_hist[0] is one older
-    if (dir_prev == ((2)%3)) {
+    if (dir_prev == (2)) {
         direction = -1;
     } else {
         direction = 1;
@@ -158,8 +158,8 @@ void photoInterrupt_2(){
         prev_times [i-1] = prev_times [i];
     }
     prev_times[5] = avg_time;
-    //dir_hist [1] is most recent, dir_hist[0] is one older
-    if (dir_prev == ((3)%3)) {
+
+    if (dir_prev == (0)) {
         direction = -1;
     } else {
         direction = 1;
@@ -179,8 +179,8 @@ void photoInterrupt_3(){
         prev_times [i-1] = prev_times [i];
     }
     prev_times[5] = avg_time;
-    //dir_hist [1] is most recent, dir_hist[0] is one older
-    if (dir_prev == ((4)%3)) {
+
+    if (dir_prev == (1)) {
         direction = -1;
     } else {
         direction = 1;
@@ -201,12 +201,6 @@ inline int16_t note_freq(char note){
         default : return 7902;
     }
 }
-
-// convert from speed to 0->1
-/*inline float pwm_convert(float in) {
-    if (in>0.0) {return 0.15 + (in/65.4);}
-    else {return -0.15 + (in/65.4);}
-}*/
 
 // set speed and direction of rotor
 inline void setPWMvelocity(float spd) {
@@ -256,17 +250,13 @@ void spinMotor() {
             e_t = max_spd - velocity(1000000.0/avg_time);
             de_dt = (e_t - e_t_prev)*1000.0/diff_time;
             float speed_adjust = kp*e_t + kd*de_dt;
-            //pc.printf("speed_adjust = %f\r\n", speed_adjust);
             setPWMvelocity(getPWMvelocity()+speed_adjust);
-            //setPWMvelocity(1.0);
-            //wait_ms(30);
             t.start();
         }
         intState = readRotorState();
         motorOut((intState-orState+lead+6)%6, speed); //+6 to make sure the remainder is positive
     }
 }
-
 
 int split_notes(char regex[49]) {
     int i = 1;
@@ -341,12 +331,9 @@ void rot_commands(char* regex) {
         Rnum = atof(Rnumstr);
     } 
     if(Vexists) {
-        //pc.printf("ConvertingV\n");
         for (int i = VNumstart; i <= VNumstop; i++) {
             Vnumstr[i-VNumstart]=regex[i];
-            //pc.printf("regex[i]: %c\r\n",regex[i]);
         }
-        //pc.printf("ConvertingV\n");
         Vnum = atof(Vnumstr);
     }
     if(Rexists && Vexists && (Vnum < 0)) {
@@ -359,14 +346,12 @@ void rot_commands(char* regex) {
         max_rotations = Rnum;
         dist = 1;
         mut.unlock();
-        //pc.printf("new rots %f \r\n", Rnum);
     }
     else if (!Rexists && Vexists) {
         mut.lock();
         max_spd = Vnum;
         dist = 0;
         mut.unlock();
-        //pc.printf("new spd %f \r\n", Vnum);
     }
     // else if ()
 }
@@ -386,10 +371,6 @@ int main() {
     I1.rise(photoInterrupt_1);
     I2.rise(photoInterrupt_2);
     I3.rise(photoInterrupt_3);
-    //I4.fall(photoInterrupt);
-    //I5.fall(photoInterrupt);
-    //I6.fall(photoInterrupt);
-    //I1.disable_irq();
     
     L1L.period_us(1000000/freq);
     L1H.period_us(1000000/freq);
@@ -435,12 +416,10 @@ int main() {
                     L3H.period(1/freq);
                 }
                 else if (buffer[0] == 'R' || buffer[0] == 'V'){
-                    //double out = atof(buffer);
                     rot_commands(buffer);
                     for (int i = 0; i <= 48; i++) {
                        pc.printf("%c",buffer[i]);
                     }
-                    //speed = out;
                 }
                 else if (buffer[0] == 's'){
                     mut.lock();
