@@ -417,9 +417,6 @@ int main() {
                 }
                 else if (buffer[0] == 'R' || buffer[0] == 'V'){
                     rot_commands(buffer);
-                    for (int i = 0; i <= 48; i++) {
-                       pc.printf("%c",buffer[i]);
-                    }
                 }
                 else if (buffer[0] == 's'){
                     mut.lock();
