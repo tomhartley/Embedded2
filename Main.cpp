@@ -56,6 +56,19 @@ volatile uint8_t dir_prev;
 // speed times
 volatile int avg_time = 0; // 1/6 of a cycle
 volatile int prev_times[] = {0,0,0,0,0,0};
+int8_t currentNoteIndex = 0;
+int8_t currentTime = 0;
+int8_t maxLength = 7;
+int16_t freqNote = 4186;
+int8_t a[7][2] =    {  
+                       {1, 4},
+                       {2, 4},
+                       {3, 4},
+                       {4, 4},
+                       {5, 4},
+                       {6, 4},
+                       {7, 4}
+                    };
 Timer rot;
 
 // mutex
@@ -70,7 +83,10 @@ Serial pc(SERIAL_TX, SERIAL_RX);
 // Threads
 Thread spinThread;
 Thread cycleThread;
- 
+
+// Ticker
+Ticker noteTicker;
+
 //Status LED
 DigitalOut led1(LED1);
  
@@ -235,7 +251,7 @@ inline float velocity(float in) {
     return ret;
 }
 
-void spinMotor() {
+/*void spinMotor() {
     int8_t intState = 0;
     float e_t = 0, e_t_prev = 0, de_dt = 0;
     float kp = 0.013, kd = 0.000742;
@@ -255,6 +271,65 @@ void spinMotor() {
         }
         intState = readRotorState();
         motorOut((intState-orState+lead+6)%6, speed); //+6 to make sure the remainder is positive
+    }
+}*/
+
+void spinMotor() {
+    int8_t intState = 0;
+    float e_t = 0, e_t_prev = 0, de_dt = 0;
+    float kp = dist ? 10 : 0.013; // dist : velocity
+    float kd = dist ? 10 : 0.000742;
+    int current_mode = dist;
+    Timer t;
+    t.start();
+    while(1) {
+        if (current_mode != dist) {
+            current_mode = dist;
+            kp = dist ? 10 : 0.013;
+            kd = dist ? 10 : 0.000742;
+            e_t = 0;
+            e_t_prev = 0;
+            mut.lock();
+            rotations = 0;
+            mut.unlock();
+        }
+        if (t.read_ms() > 30){
+            t.stop();
+            int diff_time = t.read_ms();
+            t.reset();
+            e_t_prev = e_t;
+            mut.lock();
+            if (!dist) {
+                e_t = max_spd - velocity(1000000.0/avg_time);
+            } else {
+                e_t = (float)max_rotations - (float)rotations/6.0;
+            }
+            mut.unlock();
+            de_dt = (e_t - e_t_prev)*1000.0/diff_time;
+            float speed_adjust = kp*e_t + kd*de_dt;
+            //pc.printf("switching to %d", speed_adjust);
+            //pc.printf("speed_adjust = %f\r\n", speed_adjust+getPWMvelocity());
+            setPWMvelocity(getPWMvelocity()+speed_adjust);
+            //setPWMvelocity(1.0);
+            //wait_ms(30);
+            t.start();
+        }
+        intState = readRotorState();
+        motorOut((intState-orState+lead+6)%6, speed); //+6 to make sure the remainder is positive
+    }
+}
+
+inline int16_t note_freq_int(int8_t note){
+    led1 = !led1;
+    switch (note) { 
+        case 1: return 4186;
+        case 2: return 4699;
+        case 3: return 5274;
+        case 4: return 5588;
+        case 5: return 6272;
+        case 6: return 7040;
+        case 7: return 7902;
+        default: return 7902;
     }
 }
 
@@ -346,14 +421,47 @@ void rot_commands(char* regex) {
         max_rotations = Rnum;
         dist = 1;
         mut.unlock();
+        pc.printf("Rexists = %f", Rnum);
     }
     else if (!Rexists && Vexists) {
         mut.lock();
         max_spd = Vnum;
-        dist = 0;
+        dist = 0;        
         mut.unlock();
+        pc.printf("Vexists = %f", Vnum);
     }
     // else if ()
+}
+
+void updateNote() {
+    
+    if(currentTime == 0 && currentNoteIndex == 0) {
+        int16_t freqNote = note_freq_int(a[0][0]);
+        L1L.period_us(1000000/freqNote);
+        L1H.period_us(1000000/freqNote);
+        L2L.period_us(1000000/freqNote);
+        L2H.period_us(1000000/freqNote);
+        L3L.period_us(1000000/freqNote);
+        L3H.period_us(1000000/freqNote);
+    }
+    
+    if (currentTime==a[currentNoteIndex][1]) {
+        currentTime = 0;
+        currentNoteIndex++;
+        if(currentNoteIndex == maxLength) {
+            currentNoteIndex = 0;
+            noteTicker.detach();
+        } else { 
+            int16_t freqNote = note_freq_int(a[currentNoteIndex][0]);
+            L1L.period_us(1000000/freqNote);
+            L1H.period_us(1000000/freqNote);
+            L2L.period_us(1000000/freqNote);
+            L2H.period_us(1000000/freqNote);
+            L3L.period_us(1000000/freqNote);
+            L3H.period_us(1000000/freqNote);
+        }        
+    }
+    currentTime++;
 }
 
 //Main
@@ -402,26 +510,18 @@ int main() {
                 pc.printf("\r\n");
                 count = 0;
 
-                if(buffer[0] == 'T'){
-                    freq = note_freq(buffer[1]);
-
-                    int test = split_notes(buffer);
-                    pc.printf("Test = '%i'\r\n", test);
-                    pc.printf("New frequency = '%f'\r\n", freq);
-                    L1L.period(1/freq);
-                    L1H.period(1/freq);
-                    L2L.period(1/freq);
-                    L2H.period(1/freq);
-                    L3L.period(1/freq);
-                    L3H.period(1/freq);
-                }
-                else if (buffer[0] == 'R' || buffer[0] == 'V'){
+                if (buffer[0] == 'R' || buffer[0] == 'V'){
                     rot_commands(buffer);
+                    for (int i = 0; i <= 48; i++) {
+                       pc.printf("%c",buffer[i]);
+                    }
                 }
                 else if (buffer[0] == 's'){
                     mut.lock();
                     pc.printf("desired speed = %f, speed = %f, direction = %d", max_spd, velocity(1000000.0/avg_time), direction);
                     mut.unlock();
+                } else if (buffer[0] = 'T') {
+                    noteTicker.attach(&updateNote, 1.0);
                 }
                 else {
                     count = 0;
